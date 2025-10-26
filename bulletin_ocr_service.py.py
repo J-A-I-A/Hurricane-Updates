@@ -10,23 +10,22 @@ from urllib.parse import urljoin
 
 # --- Azure Blob Storage Imports ---
 from azure.storage.blob import BlobServiceClient, ContentSettings
-from azure.core.exceptions import AzureError
+from azure.core.exceptions import AzureError, ResourceNotFoundError
+
+# --- RunPod Import ---
+import runpod
 
 # --- CONFIGURATION ---
-# TODO: Set your Azure container name here
-AZURE_CONTAINER_NAME = "updates"
-# TODO: Set your AZURE_STORAGE_CONNECTION_STRING as an environment variable
+# These are now loaded from environment variables (set in RunPod Secrets)
+AZURE_CONTAINER_NAME = os.environ.get("AZURE_CONTAINER_NAME")
 AZURE_CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
 
-# The webpage to scrape
+# The webpage to scrape (can be overridden by handler input)
 WEBPAGE_URL = "https://www.odpem.org.jm/weather-alert-melissa/"
 
-# How often to check for a new image (in seconds)
-POLL_INTERVAL_SECONDS = 3600  # 1 hour
-
-# Local storage setup
+# Local storage setup (ephemeral, just for this run)
 WORKING_DIR = "/tmp/bulletin_ocr"
-STATE_FILE = os.path.join(WORKING_DIR, "last_processed_url.txt")
+STATE_FILE_NAME = "bulletin_processed_urls.txt" # The name of the state file *in blob storage*
 LOCAL_IMG_PATH = os.path.join(WORKING_DIR, "bulletin_image.jpg")
 OCR_OUT_DIR = os.path.join(WORKING_DIR, "ocr_output")
 # --- END CONFIGURATION ---
@@ -35,6 +34,7 @@ OCR_OUT_DIR = os.path.join(WORKING_DIR, "ocr_output")
 def initialize_model():
     """
     Checks for GPU and loads the DeepSeek-OCR model into memory.
+    This runs ONCE when the RunPod worker starts.
     """
     print("Initializing DeepSeek-OCR model...")
     if not torch.cuda.is_available():
@@ -69,6 +69,7 @@ def find_all_bulletin_images(url: str) -> list[str]:
     Scrapes the webpage to find ALL images in the main content.
     Returns a list of full image URLs.
     """
+    # ... (This function is unchanged from your version) ...
     print(f"Scraping {url} for all images...")
     image_urls = []
     try:
@@ -110,6 +111,7 @@ def download_image(url: str, save_path: str):
     """
     Downloads an image from a URL to a local path.
     """
+    # ... (This function is unchanged from your version) ...
     print(f"Downloading image from {url}...")
     try:
         response = requests.get(url, stream=True, timeout=10)
@@ -127,6 +129,7 @@ def run_ocr_to_markdown(model, tokenizer, img_path: str, out_dir: str) -> str:
     """
     Runs the OCR model on a local image and returns the extracted Markdown.
     """
+    # ... (This function is unchanged from your version) ...
     print(f"Running OCR on {img_path}...")
     
     # Resize large images for speed (from your snippet)
@@ -183,141 +186,158 @@ def run_ocr_to_markdown(model, tokenizer, img_path: str, out_dir: str) -> str:
     return content
 
 
-def upload_to_azure_blob(content: str, container_name: str, blob_name: str):
+def upload_to_azure_blob(content: str | bytes, container_name: str, blob_name: str, content_type: str):
     """
-    Uploads a string content to an Azure Blob Storage container.
+    Uploads string or bytes content to an Azure Blob Storage container.
     """
     if not AZURE_CONNECTION_STRING:
-        print("Error: AZURE_STORAGE_CONNECTION_STRING environment variable not set.")
-        print("Please set this environment variable to your Azure connection string.")
         raise ValueError("Azure connection string not found.")
         
     print(f"Uploading to Azure Blob Storage container '{container_name}' as '{blob_name}'...")
     
     try:
-        # Initialize the BlobServiceClient
         blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
-        
-        # Get a client for the specific blob
         blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
+        content_settings = ContentSettings(content_type=content_type)
         
-        # Define content settings to set the MIME type
-        content_settings = ContentSettings(content_type='text/markdown')
-        
-        # Upload the content (must be encoded to bytes)
-        blob_client.upload_blob(content.encode('utf-8'), content_settings=content_settings, overwrite=True)
-        
+        # Encode string to bytes if needed
+        if isinstance(content, str):
+            content_bytes = content.encode('utf-8')
+        else:
+            content_bytes = content
+
+        blob_client.upload_blob(content_bytes, content_settings=content_settings, overwrite=True)
         print("Upload Successful.")
     
     except (AzureError, ValueError) as e:
         print(f"Error uploading to Azure Blob Storage: {e}")
         raise
-    except Exception as e:
-        print(f"An unexpected error occurred during blob upload: {e}")
+
+
+def get_processed_urls(container_name: str, state_blob_name: str) -> set[str]:
+    """Reads all previously processed URLs from the state file in Blob Storage."""
+    if not AZURE_CONNECTION_STRING:
+        raise ValueError("Azure connection string not found.")
+        
+    print(f"Fetching processed URL list from blob: {state_blob_name}")
+    try:
+        blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
+        blob_client = blob_service_client.get_blob_client(container=container_name, blob=state_blob_name)
+        
+        # Download blob content
+        blob_data = blob_client.download_blob().readall()
+        content = blob_data.decode('utf-8')
+        
+        # Read all lines, strip whitespace/newlines, and return as a set
+        return {line.strip() for line in content.splitlines() if line.strip()}
+        
+    except ResourceNotFoundError:
+        print("No state file blob found. Will create a new one.")
+        return set()
+    except (AzureError, ValueError) as e:
+        print(f"Error downloading state file: {e}")
         raise
 
 
-def get_processed_urls() -> set[str]:
-    """Reads all previously processed URLs from the state file."""
-    try:
-        with open(STATE_FILE, 'r') as f:
-            # Read all lines, strip whitespace/newlines, and return as a set
-            return {line.strip() for line in f if line.strip()}
-    except FileNotFoundError:
-        print("No state file found. Will create a new one.")
-        return set()
+def save_processed_urls(url_set: set[str], container_name: str, state_blob_name: str):
+    """Saves the complete set of processed URLs back to Blob Storage, overwriting."""
+    print(f"Saving updated URL list to blob: {state_blob_name}")
+    # Join the set into a single string, one URL per line
+    content = "\n".join(sorted(list(url_set)))
+    upload_to_azure_blob(content, container_name, state_blob_name, content_type='text/plain')
 
 
-def add_processed_url(url: str):
-    """Appends a new successfully processed URL to the state file."""
-    try:
-        with open(STATE_FILE, 'a') as f:
-            f.write(f"{url}\n")
-    except IOError as e:
-        print(f"Error writing to state file {STATE_FILE}: {e}")
+# --- Load Model Globally ---
+# This runs when the RunPod worker boots up, *before* the handler.
+# This keeps the model "hot" in memory.
+model, tokenizer = initialize_model()
 
 
-def main_loop():
+# --- RunPod Handler ---
+def handler(event):
     """
-    The main service loop.
+    This function is called by RunPod for each HTTP request.
     """
-    print("--- Starting Bulletin OCR Service ---")
+    print(f"Handler started at {time.ctime()}")
     
-    # 1. Create working directory
+    # 1. Get config (from env vars or override via event)
+    config = event.get("input", {})
+    container_name = config.get("container_name", AZURE_CONTAINER_NAME)
+    scrape_url = config.get("scrape_url", WEBPAGE_URL)
+    
+    if not container_name or not AZURE_CONNECTION_STRING:
+        return {"error": "AZURE_CONTAINER_NAME or AZURE_STORAGE_CONNECTION_STRING not set."}
+
+    # 2. Create local working directories
     os.makedirs(WORKING_DIR, exist_ok=True)
     os.makedirs(OCR_OUT_DIR, exist_ok=True)
     
-    # 2. Load the model (this is the slow part)
-    model, tokenizer = initialize_model()
+    processed_urls = set()
+    new_images_count = 0
     
-    # 3. Start the loop
-    while True:
-        print(f"\n--- New check at {time.ctime()} ---")
-        try:
-            # 4. Find ALL images on the website
-            current_image_urls = find_all_bulletin_images(WEBPAGE_URL)
-            if not current_image_urls:
-                print("Could not find any image URLs. Will try again later.")
-                time.sleep(POLL_INTERVAL_SECONDS)
-                continue
+    try:
+        # 3. Find ALL images on the website
+        current_image_urls = find_all_bulletin_images(scrape_url)
+        if not current_image_urls:
+            return {"status": "Complete", "message": "Could not find any image URLs."}
+            
+        # 4. Compare with the set of all processed images from Azure Blob
+        processed_urls = get_processed_urls(container_name, STATE_FILE_NAME)
+        
+        new_images_to_process = [
+            url for url in current_image_urls if url not in processed_urls
+        ]
+        
+        if not new_images_to_process:
+            return {"status": "Complete", "message": "No new bulletin images found."}
+
+        print(f"Found {len(new_images_to_process)} new bulletin image(s).")
+        
+        # 5. Process each new image
+        for image_url in new_images_to_process:
+            print(f"--- Processing new image: {image_url} ---")
+            try:
+                download_image(image_url, LOCAL_IMG_PATH)
                 
-            # 5. Compare with the set of all processed images
-            processed_urls = get_processed_urls()
-            
-            # Determine which images are new
-            new_images_to_process = [
-                url for url in current_image_urls if url not in processed_urls
-            ]
-            
-            if not new_images_to_process:
-                print("No new bulletin images found. Waiting...")
-                time.sleep(POLL_INTERVAL_SECONDS)
-                continue
-
-            print(f"Found {len(new_images_to_process)} new bulletin image(s).")
-            
-            # 6. Process each new image
-            for image_url in new_images_to_process:
-                print(f"--- Processing new image: {image_url} ---")
-                try:
-                    download_image(image_url, LOCAL_IMG_PATH)
-                    
-                    markdown_content = run_ocr_to_markdown(
-                        model, tokenizer, LOCAL_IMG_PATH, OCR_OUT_DIR
-                    )
-                    
-                    # 7. Upload to Azure Blob Storage
-                    # Create a unique name (blob name)
-                    blob_name = f"bulletins/{time.strftime('%Y-%m-%d_%H-%M-%S')}_bulletin.md"
-                    upload_to_azure_blob(markdown_content, AZURE_CONTAINER_NAME, blob_name)
-                    
-                    # 8. Save state *only* for this successfully processed image
-                    add_processed_url(image_url)
-                    print(f"Successfully processed and uploaded: {image_url}")
+                markdown_content = run_ocr_to_markdown(
+                    model, tokenizer, LOCAL_IMG_PATH, OCR_OUT_DIR
+                )
                 
-                except Exception as e:
-                    print(f"Failed to process image {image_url}: {e}")
-                    # Log the error but continue to the next image
-                    # The main loop's exception handler will catch fatal errors
+                # Create a unique blob name
+                blob_name = f"bulletins/{time.strftime('%Y-%m-%d_%H-%M-%S')}_{os.path.basename(image_url)}.md"
+                upload_to_azure_blob(markdown_content, container_name, blob_name, content_type='text/markdown')
+                
+                # Add to our set for final state save
+                processed_urls.add(image_url)
+                new_images_count += 1
+                print(f"Successfully processed and uploaded: {image_url}")
             
-            print("Finished processing all new images.")
+            except Exception as e:
+                print(f"Failed to process image {image_url}: {e}")
+                # Log error but continue to the next image
 
-        except Exception as e:
-            print(f"An error occurred in the main loop: {e}")
-            print("Will retry after a shorter delay (60s).")
-            time.sleep(60) # Short delay on error
+        # 6. Save the new complete state file
+        if new_images_count > 0:
+            save_processed_urls(processed_urls, container_name, STATE_FILE_NAME)
             
-        else:
-            # Wait for the next poll interval if successful
-            print(f"Sleeping for {POLL_INTERVAL_SECONDS} seconds...")
-            time.sleep(POLL_INTERVAL_SECONDS)
+        return {
+            "status": "Complete",
+            "message": f"Finished processing. Uploaded {new_images_count} new bulletin(s)."
+        }
+
+    except Exception as e:
+        print(f"An error occurred in the handler: {e}")
+        # Return an error so RunPod can log it
+        return {"error": str(e)}
 
 
+# --- Start Serverless Worker ---
 if __name__ == "__main__":
-    if AZURE_CONTAINER_NAME == "your-azure-container-name-here":
-        print("ERROR: Please edit `bulletin_ocr_service.py` and set `AZURE_CONTAINER_NAME`.")
-    elif not AZURE_CONNECTION_STRING:
-        print("ERROR: AZURE_STORAGE_CONNECTION_STRING environment variable not set.")
-        print("Please set this variable with your connection string before running.")
+    if not AZURE_CONTAINER_NAME or not AZURE_CONNECTION_STRING:
+        print("="*50)
+        print("ERROR: AZURE_CONTAINER_NAME or AZURE_STORAGE_CONNECTION_STRING not set.")
+        print("Please set these environment variables before running.")
+        print("="*50)
     else:
-        main_loop()
+        print("Starting RunPod serverless worker...")
+        runpod.serverless.start({"handler": handler})

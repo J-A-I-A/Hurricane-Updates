@@ -1,0 +1,12 @@
+torch
+transformers==4.46.3
+tokenizers==0.20.3
+einops
+addict
+easydict
+pillow
+requests
+beautifulsoup4
+safetensors
+azure-storage-blob
+runpod
