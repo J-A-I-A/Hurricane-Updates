@@ -79,28 +79,14 @@ def find_all_bulletin_images(url: str) -> list[str]:
         soup = BeautifulSoup(response.text, 'html.parser')
         
         # Find the main article content area
-        content_area = soup.find('div', class_='entry-content')
-        
-        if not content_area:
-            print("Could not find 'div.entry-content' in webpage.")
-            return []
-            
-        # Find ALL image tags within that area
-        image_tags = content_area.find_all('img')
-        
-        if not image_tags:
-            print("Found content area, but no 'img' tags found inside.")
-            return []
+        content_area = soup.find_all('a', class_='elementor-button elementor-button-link elementor-size-sm')
 
-        for image_tag in image_tags:
-            if image_tag.get('src'):
-                image_url = image_tag['src']
-                # Handle relative URLs if any
-                if not image_url.startswith(('http:', 'https:')):
-                    image_url = urljoin(url, image_url)
-                image_urls.append(image_url)
-            
+        for link in content_area:
+           if 'bulletin' in link['href'].lower():
+            image_url = link['href']
+            image_urls.append(image_url)
         return image_urls
+
             
     except requests.RequestException as e:
         print(f"Error fetching webpage: {e}")
