@@ -13,11 +13,11 @@ jobs:
     steps:
       - name: Send POST Request to RunPod
         run: |
-          curl -X POST "[https://api.runpod.ai/v2/$](https://api.runpod.ai/v2/$){{ secrets.RUNPOD_ENDPOINT_ID }}/run" \
+          curl -X POST "https://api.runpod.ai/v2/${{ secrets.RUNPOD_ENDPOINT_ID }}/run" \
           -H "Authorization: Bearer ${{ secrets.RUNPOD_API_KEY }}" \
           -H "Content-Type: application/json" \
           -d '{
                 "input": {
-                  "scrape_url": "[https://www.odpem.org.jm/weather-alert-melissa/](https://www.odpem.org.jm/weather-alert-melissa/)"
+                  "scrape_url": "https://www.odpem.org.jm/weather-alert-melissa/"
                 }
               }'
