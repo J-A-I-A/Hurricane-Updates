@@ -111,7 +111,7 @@ def download_image(url: str, save_path: str):
         raise
 
 
-def run_ocr_to_markdown(model, tokenizer, img_path: str, out_dir: str) -> str:
+def run_ocr_model(model, tokenizer, img_path: str, out_dir: str) -> str:
     """
     Runs the OCR model on a local image and returns the extracted Markdown.
     """
@@ -128,10 +128,6 @@ def run_ocr_to_markdown(model, tokenizer, img_path: str, out_dir: str) -> str:
     # Use a prompt that requests Markdown output
     prompt = "<image>\n<|grounding|>Convert the document to markdown."
     
-    # Clear the output directory
-    os.makedirs(out_dir, exist_ok=True)
-    for f in glob.glob(os.path.join(out_dir, "*")):
-        os.remove(f)
 
     @torch.inference_mode()
     def _infer():
@@ -140,36 +136,25 @@ def run_ocr_to_markdown(model, tokenizer, img_path: str, out_dir: str) -> str:
             tokenizer,
             prompt=prompt,
             image_file=img_path,
-            output_path=out_dir,
+            output_path=None,
             base_size=768,
             image_size=512,
             crop_mode=False,
-            save_results=True,
+            save_results=False,
             test_compress=False
         )
         print(f"OCR inference complete in {time.time()-t:.1f}s")
         return res
 
-    _infer()
+    markdown_text = _infer()
 
-    # Find the saved Markdown file
-    # The `infer` function saves results, including a markdown file.
-    md_files = glob.glob(os.path.join(out_dir, "*.md"))
-    if not md_files:
-        print("OCR ran, but no Markdown file was found in the output directory.")
-        # Fallback: check for a .txt file
-        txt_files = glob.glob(os.path.join(out_dir, "*.txt"))
-        if not txt_files:
-            raise Exception("OCR failed to produce an output file.")
-        output_file_path = txt_files[0]
-    else:
-        output_file_path = md_files[0]
+    # The 'res' object is a string containing the markdown output
+    markdown_text = res
         
-    print(f"Reading OCR output from: {output_file_path}")
-    with open(output_file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    return content
+    if not markdown_text or markdown_text.isspace():
+        raise ValueError("OCR ran but returned no text.")
+            
+    return markdown_text
 
 
 def upload_to_azure_blob(content: str | bytes, container_name: str, blob_name: str, content_type: str):
@@ -285,7 +270,7 @@ def handler(event):
             try:
                 download_image(image_url, LOCAL_IMG_PATH)
                 
-                markdown_content = run_ocr_to_markdown(
+                markdown_content = run_ocr_model(
                     model, tokenizer, LOCAL_IMG_PATH, OCR_OUT_DIR
                 )
                 
