@@ -1,6 +1,6 @@
 # Use the official RunPod PyTorch image as the base
 # This image already includes Python, PyTorch, and the necessary CUDA drivers
-FROM runpod/pytorch:2.3.0-py3.10-cuda12.1.1-devel-ubuntu22.04
+FROM runpod/pytorch:1.0.2-cu1281-torch271-ubuntu2204
 
 # Set a working directory inside the container
 WORKDIR /app
