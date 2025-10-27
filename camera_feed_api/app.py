@@ -148,7 +148,7 @@ def record_stream_to_file(stream_url: str, duration: int, out_path: str):
 
 def analyze_with_gemini(video_path: str, prompt: str) -> str:
     try:
-        video_bytes = open(file, 'rb').read()
+        video_bytes = open(video_path, 'rb').read()
 
         response = client.models.generate_content(
             # model='models/gemini-2.0-flash',
@@ -158,7 +158,7 @@ def analyze_with_gemini(video_path: str, prompt: str) -> str:
                     types.Part(
                         inline_data=types.Blob(data=video_bytes, mime_type='video/mp4')
                     ),
-                    types.Part(text=query)
+                    types.Part(text=prompt)
                 ]
             )
         )
