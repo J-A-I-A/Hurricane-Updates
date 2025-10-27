@@ -192,7 +192,7 @@ def run_ocr(img_path: str) -> str:
         
         if not os.path.exists(markdown_file_path):
             # Fallback: check for *any* .md file, just in case.
-            md_files = glob.glob(os.path.join(output_dir, "*.md"))
+            md_files = glob.glob(os.path.join(output_dir, "*.mmd"))
             if not md_files:
                 raise FileNotFoundError(f"OCR ran, but no .md file was found in {output_dir}")
             markdown_file_path = md_files[0] # Use the first one found
