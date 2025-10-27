@@ -142,6 +142,8 @@ def run_ocr_model(model, tokenizer, img_path: str) -> str:
         
         # The 'res' object is a string containing the markdown output
         markdown_text = res
+        print("YOWWW")
+        print(markdown_text)
         
         if not markdown_text or markdown_text.isspace():
             raise ValueError("OCR ran but returned no text.")
