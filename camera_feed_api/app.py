@@ -210,6 +210,6 @@ def describe(req: DescribeRequest):
             pass
 
 
-@app.get("/health")
+@app.get("/ping")
 def health():
     return {"ok": True, "service": "yt-snapshot-gemini", "version": "0.1.0"}
