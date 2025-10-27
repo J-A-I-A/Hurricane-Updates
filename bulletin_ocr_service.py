@@ -169,6 +169,7 @@ def run_ocr(img_path: str) -> str:
     
     try:
         # 2. Run inference, saving results to the unique directory
+        # The returned 'res' object is NOT the text, as per user feedback.
         model.infer(
             tok,
             prompt=prompt,
@@ -184,12 +185,19 @@ def run_ocr(img_path: str) -> str:
         print(f"OCR inference complete in {time.time()-t:.1f}s")
         
         # 3. Find the markdown file in the output directory
-        # The model saves output as 'result.md' inside the `output_path`
-        markdown_file_path = os.path.join(output_dir, "result.md")
+        # --- FIX ---
+        # The model saves output based on the *input* filename.
+        base_filename = os.path.basename(img_path).rsplit('.', 1)[0]
+        markdown_file_path = os.path.join(output_dir, f"{base_filename}.md")
         
         if not os.path.exists(markdown_file_path):
-            raise FileNotFoundError(f"OCR ran, but 'result.md' not found in {output_dir}")
-            
+            # Fallback: check for *any* .md file, just in case.
+            md_files = glob.glob(os.path.join(output_dir, "*.md"))
+            if not md_files:
+                raise FileNotFoundError(f"OCR ran, but no .md file was found in {output_dir}")
+            markdown_file_path = md_files[0] # Use the first one found
+        
+        print(f"Reading markdown from: {markdown_file_path}")
         # 4. Read the markdown text
         with open(markdown_file_path, 'r', encoding='utf-8') as f:
             markdown_text = f.read()
