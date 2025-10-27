@@ -1,6 +1,6 @@
-fastapi==0.95.2
-uvicorn[standard]==0.22.0
-pydantic==1.10.12
-yt-dlp==2025.07.01
-python-multipart==0.0.6
-google-genai==0.16.0
+fastapi
+uvicorn[standard]
+pydantic
+yt-dlp
+python-multipart
+google-genai
