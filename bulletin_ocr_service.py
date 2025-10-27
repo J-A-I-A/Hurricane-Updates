@@ -111,50 +111,93 @@ def download_image(url: str, save_path: str):
         raise
 
 
-def run_ocr_model(model, tokenizer, img_path: str, out_dir: str) -> str:
+@torch.inference_mode()
+def run_ocr_model(model, tokenizer, img_path: str) -> str:
     """
-    Runs the OCR model on a local image and returns the extracted Markdown.
+    Runs the DeepSeek-OCR model on a local image file and returns the
+    extracted text as a markdown string.
     """
-    # ... (This function is unchanged from your version) ...
-    print(f"Running OCR on {img_path}...")
-    
-    # Resize large images for speed (from your snippet)
-    img = Image.open(img_path).convert("RGB")
-    if max(img.size) > 2000:
-        s = 2000 / max(img.size)
-        img = img.resize((int(img.width*s), int(img.height*s)))
-        img.save(img_path, optimize=True)
+    print(f"Starting OCR for {img_path}...")
+    t = time.time()
 
-    # Use a prompt that requests Markdown output
+    # The prompt to instruct the model to return markdown
     prompt = "<image>\n<|grounding|>Convert the document to markdown."
     
-
-    @torch.inference_mode()
-    def _infer():
-        t = time.time()
+    try:
+        # Run inference
+        # We set save_results=False as we don't need the files, just the text.
         res = model.infer(
-            tokenizer,
+            tok,
             prompt=prompt,
             image_file=img_path,
-            output_path=None,
-            base_size=768,
-            image_size=512,
-            crop_mode=False,
-            save_results=False,
+            output_path=None,      # No output path
+            base_size=768,       
+            image_size=512,      
+            crop_mode=False,     
+            save_results=False,  # <-- IMPORTANT: Do not save to disk
             test_compress=False
         )
-        print(f"OCR inference complete in {time.time()-t:.1f}s")
-        return res
-
-    markdown_text = _infer()
-
-    # The 'res' object is a string containing the markdown output
-    markdown_text = res
         
-    if not markdown_text or markdown_text.isspace():
-        raise ValueError("OCR ran but returned no text.")
+        print(f"OCR inference complete in {time.time()-t:.1f}s")
+        
+        # The 'res' object is a string containing the markdown output
+        markdown_text = res
+        
+        if not markdown_text or markdown_text.isspace():
+            raise ValueError("OCR ran but returned no text.")
             
-    return markdown_text
+        return markdown_text
+
+    except Exception as e:
+        print(f"Error during OCR inference: {e}")
+        # Re-raise to be caught by the main handler
+        raise
+
+
+# def run_ocr_model(model, tokenizer, img_path: str, out_dir: str) -> str:
+#     """
+#     Runs the OCR model on a local image and returns the extracted Markdown.
+#     """
+#     # ... (This function is unchanged from your version) ...
+#     print(f"Running OCR on {img_path}...")
+    
+#     # Resize large images for speed (from your snippet)
+#     img = Image.open(img_path).convert("RGB")
+#     if max(img.size) > 2000:
+#         s = 2000 / max(img.size)
+#         img = img.resize((int(img.width*s), int(img.height*s)))
+#         img.save(img_path, optimize=True)
+
+#     # Use a prompt that requests Markdown output
+#     prompt = "<image>\n<|grounding|>Convert the document to markdown."
+    
+
+#     @torch.inference_mode()
+#     def _infer():
+#         t = time.time()
+#         res = model.infer(
+#             tokenizer,
+#             prompt=prompt,
+#             image_file=img_path,
+#             output_path=None,
+#             base_size=768,
+#             image_size=512,
+#             crop_mode=False,
+#             save_results=False,
+#             test_compress=False
+#         )
+#         print(f"OCR inference complete in {time.time()-t:.1f}s")
+#         return res
+
+#     markdown_text = _infer()
+
+#     # The 'res' object is a string containing the markdown output
+#     markdown_text = res
+        
+#     if not markdown_text or markdown_text.isspace():
+#         raise ValueError("OCR ran but returned no text.")
+            
+#     return markdown_text
 
 
 def upload_to_azure_blob(content: str | bytes, container_name: str, blob_name: str, content_type: str):
