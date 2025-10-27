@@ -1,4 +1,6 @@
 torch
+transformers==4.46.3
+tokenizers==0.20.3
 einops
 addict
 easydict
