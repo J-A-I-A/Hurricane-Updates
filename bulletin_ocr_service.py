@@ -334,7 +334,7 @@ def handler(event):
         next_bulletin_num = get_next_bulletin_number()
 
         # 5. Process each new image
-        for image_url in new_images_to_process:
+        for image_url in new_images_to_process[::-1]:
             local_image_path = None
             try:
                 # 4a. Download the image
