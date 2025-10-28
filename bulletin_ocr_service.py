@@ -9,6 +9,7 @@ import runpod
 from PIL import Image
 from transformers import AutoModel, AutoTokenizer
 from bs4 import BeautifulSoup
+import re
 from urllib.parse import urljoin
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
@@ -41,6 +42,46 @@ def get_azure_blob_client(blob_name):
         
     blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
     return blob_service_client.get_blob_client(container=AZURE_CONTAINER_NAME, blob=blob_name)
+
+def get_container_client():
+    """Returns a ContainerClient for the configured container."""
+    if not AZURE_CONNECTION_STRING:
+        raise ValueError("ERROR: AZURE_STORAGE_CONNECTION_STRING not set.")
+    if not AZURE_CONTAINER_NAME:
+        raise ValueError("ERROR: AZURE_CONTAINER_NAME not set.")
+    blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
+    return blob_service_client.get_container_client(AZURE_CONTAINER_NAME)
+
+def get_next_bulletin_number() -> int:
+    """
+    Scans Azure Blob Storage for any markdown blobs and extracts the number
+    at the end of the filename (before the extension), returning
+    max(existing)+1. If none exist, returns 1.
+    """
+    try:
+        container = get_container_client()
+        max_num = 0
+        # Consider only markdown files to avoid scanning unrelated binary blobs
+        for blob in container.list_blobs():
+            name = blob.name
+            if not name.lower().endswith('.md'):
+                continue
+            # Strip extension and extract trailing digits
+            base = name.rsplit('.', 1)[0]
+            # Extract the last number appearing anywhere in the base
+            nums = re.findall(r"(\d+)", base)
+            if not nums:
+                continue
+            try:
+                n = int(nums[-1])
+                if n > max_num:
+                    max_num = n
+            except ValueError:
+                continue
+        return max_num + 1 if max_num >= 0 else 1
+    except Exception as e:
+        print(f"WARN: Failed to list existing Bulletin files: {e}")
+        return 1
 
 def get_processed_urls() -> set:
     """Fetches the list of processed URLs from Azure Blob Storage."""
@@ -289,7 +330,10 @@ def handler(event):
         processed_count = 0
         failed_count = 0
         
-        # 4. Process each new image
+        # 4. Compute the starting Bulletin number once per run
+        next_bulletin_num = get_next_bulletin_number()
+
+        # 5. Process each new image
         for image_url in new_images_to_process:
             local_image_path = None
             try:
@@ -301,14 +345,14 @@ def handler(event):
                 # 4b. Run OCR to get markdown
                 markdown_text = run_ocr(local_image_path)
                 
-                # 4c. Upload markdown to Azure
-                # Create a blob name from the image URL, e.g., "Bulletin-No-7.md"
-                blob_name = os.path.basename(image_url).split('?')[0] + ".md"
+                # 4c. Upload markdown to Azure with standardized name
+                blob_name = f"Bulletin-{next_bulletin_num}.md"
                 upload_text_to_azure(markdown_text, blob_name)
                 
                 # 4d. If upload succeeds, add to our processed list
                 add_processed_url(image_url)
                 processed_count += 1
+                next_bulletin_num += 1
                 
             except Exception as e:
                 print(f"Failed to process image {image_url}: {e}")
