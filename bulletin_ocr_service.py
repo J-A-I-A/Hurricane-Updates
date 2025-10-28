@@ -100,7 +100,7 @@ def find_all_bulletin_images(url: str) -> list[str]:
         content_area = soup.find_all('a', class_='elementor-button elementor-button-link elementor-size-sm')
 
         for link in content_area:
-           if 'bulletin' in link['href'].lower():
+           if link['href'].lower().endswith('.jpg') or link['href'].lower().endswith('.jepg') or link['href'].lower().endswith('.png'):
             image_url = link['href']
             image_urls.append(image_url)
         return image_urls
