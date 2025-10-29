@@ -10,6 +10,8 @@ from PIL import Image
 from transformers import AutoModel, AutoTokenizer
 from bs4 import BeautifulSoup
 import re
+from datetime import datetime
+from markdownify import markdownify as md
 from urllib.parse import urljoin
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
@@ -17,10 +19,12 @@ from azure.storage.blob import BlobServiceClient, ContentSettings
 
 # ODPEM page to scrape
 BULLETIN_URL = "https://www.odpem.org.jm/weather-alert-melissa/"
+NEWS_URL = "https://jis.gov.jm"
 
 # Azure Configuration (injected by RunPod)
 AZURE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING')
 AZURE_CONTAINER_NAME = os.environ.get('AZURE_CONTAINER_NAME')
+AZURE_NEWS_CONTAINER_NAME = os.environ.get('AZURE_NEWS_CONTAINER_NAME')
 STATE_FILE_BLOB_NAME = "processed_bulletins.txt" # The file in Azure to track processed URLs
 
 # Model Configuration
@@ -30,6 +34,10 @@ HF_TOKEN = os.environ.get('HF_TOKEN') # Optional: for gated models/private repos
 # Global variables for the "hot" model
 model = None
 tok = None
+
+
+
+
 
 # --- AZURE BLOB STORAGE FUNCTIONS ---
 
@@ -82,6 +90,9 @@ def get_next_bulletin_number() -> int:
     except Exception as e:
         print(f"WARN: Failed to list existing Bulletin files: {e}")
         return 1
+
+
+
 
 def get_processed_urls() -> set:
     """Fetches the list of processed URLs from Azure Blob Storage."""
@@ -296,6 +307,102 @@ def initialize_model():
     print(f"Model loaded in {time.time()-t0:.1f}s. Worker is ready.")
 
 
+def fetch_article_links():
+    resp = requests.get(NEWS_URL, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+    print(resp)
+    soup = BeautifulSoup(resp.text, "html.parser")
+    links = []
+    for article in soup.find("div", class_="row jis-news-features").find_all("a"):
+        url = article.get("href")
+        if url and url.startswith("https://jis.gov.jm/"):
+            links.append(url)
+    return links[:10]  # limit to latest 10
+
+def parse_article(url):
+    resp = requests.get(url, timeout=60, headers={'User-Agent': 'Mozilla/5.0'})
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    title = soup.find("h1").get_text(strip=True)
+    date_el = soup.find("time")
+    date = date_el.get_text(strip=True) if date_el else str(datetime.now().date())
+
+    content_div = soup.find("div", class_="the-full-story")
+    content_html = str(content_div) if content_div else ""
+    content_md = md(content_html)
+
+    return {
+        "title": title,
+        "date": date,
+        "url": url,
+        "content": content_md.strip()
+    }
+
+def save_as_markdown(article):
+    filename = f"{article['date']}_{article['title'].replace(' ', '_')[:60]}.md"
+    text = f"""---
+        title: "{article['title']}"
+        date: "{article['date']}"
+        url: "{article['url']}"
+        ---
+
+        {article['content']}
+        """
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(text)
+    return filename
+
+def clear_container(container_client):
+    """Delete all blobs in the container."""
+    blobs = list(container_client.list_blobs())
+    if not blobs:
+        print("🟢 No blobs to delete.")
+        return
+
+    print(f"🧹 Deleting {len(blobs)} old blobs...")
+    for blob in blobs:
+        container_client.delete_blob(blob.name)
+    print("✅ Container cleared.")
+
+def upload_to_blob(file_path):
+    blob_service = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
+    container = blob_service.get_container_client(AZURE_CONTAINER)
+    blob_name = os.path.basename(file_path)
+
+    with open(file_path, "rb") as data:
+        container.upload_blob(name=blob_name, data=data, overwrite=True)
+        print(f"✅ Uploaded {blob_name}")
+
+def upload_news_to_blob(file_path):
+    blob_service = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
+    container = blob_service.get_container_client(AZURE_NEWS_CONTAINER_NAME)
+
+    # Clear container first (only once per run)
+    if not hasattr(upload_to_blob, "_cleared"):
+        clear_container(container)
+        upload_to_blob._cleared = True
+
+    blob_name = os.path.basename(file_path)
+    with open(file_path, "rb") as data:
+        container.upload_blob(name=blob_name, data=data, overwrite=True)
+        print(f"✅ Uploaded {blob_name}")
+
+def fetch_news_stories():
+    links = fetch_article_links()
+    print(f"Found {len(links)} articles")
+    success = 0
+    failed = 0
+    for link in links:
+        try:
+            article = parse_article(link)
+            file_path = save_as_markdown(article)
+            upload_news_to_blob(file_path)
+            success += 1
+        except Exception as e:
+            print(f"Failed to process article {link}: {e}")
+            failed += 1
+            continue
+    return success, failed
+
 def handler(event):
     """
     This is the main function called by RunPod for each serverless request.
@@ -362,7 +469,18 @@ def handler(event):
                 if local_image_path and os.path.exists(local_image_path):
                     os.remove(local_image_path)
                     
-        message = f"Job complete. Processed {processed_count} new images. Failed {failed_count}."
+        # 6. Fetch and upload news stories
+        news_success = 0
+        news_failed = 0
+        try:
+            news_success, news_failed = fetch_news_stories()
+        except Exception as e:
+            print(f"Failed during news stories fetch/upload: {e}")
+
+        message = (
+            f"Job complete. Bulletins: {processed_count} processed, {failed_count} failed. "
+            f"News: {news_success} uploaded, {news_failed} failed."
+        )
         print(message)
         return {"status": "success", "message": message}
 
