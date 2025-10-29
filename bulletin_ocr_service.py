@@ -439,32 +439,32 @@ def handler(event):
 
             # 5. Process each new image
             for image_url in new_images_to_process[::-1]:
-            local_image_path = None
-            try:
-                # 4a. Download the image
-                local_image_path = download_image_to_tmp(image_url)
-                if not local_image_path:
-                    raise Exception(f"Failed to download image: {image_url}")
+                local_image_path = None
+                try:
+                    # 4a. Download the image
+                    local_image_path = download_image_to_tmp(image_url)
+                    if not local_image_path:
+                        raise Exception(f"Failed to download image: {image_url}")
 
-                # 4b. Run OCR to get markdown
-                markdown_text = run_ocr(local_image_path)
-                
-                # 4c. Upload markdown to Azure with standardized name
-                blob_name = f"Bulletin-{next_bulletin_num}.md"
-                upload_text_to_azure(markdown_text, blob_name)
-                
-                # 4d. If upload succeeds, add to our processed list
-                add_processed_url(image_url)
-                processed_count += 1
-                next_bulletin_num += 1
-                
-            except Exception as e:
-                print(f"Failed to process image {image_url}: {e}")
-                failed_count += 1
-            finally:
-                # 4e. Clean up the local downloaded image
-                if local_image_path and os.path.exists(local_image_path):
-                    os.remove(local_image_path)
+                    # 4b. Run OCR to get markdown
+                    markdown_text = run_ocr(local_image_path)
+                    
+                    # 4c. Upload markdown to Azure with standardized name
+                    blob_name = f"Bulletin-{next_bulletin_num}.md"
+                    upload_text_to_azure(markdown_text, blob_name)
+                    
+                    # 4d. If upload succeeds, add to our processed list
+                    add_processed_url(image_url)
+                    processed_count += 1
+                    next_bulletin_num += 1
+                    
+                except Exception as e:
+                    print(f"Failed to process image {image_url}: {e}")
+                    failed_count += 1
+                finally:
+                    # 4e. Clean up the local downloaded image
+                    if local_image_path and os.path.exists(local_image_path):
+                        os.remove(local_image_path)
                     
         # 6. Fetch and upload news stories
         news_success = 0

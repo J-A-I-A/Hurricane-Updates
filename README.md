@@ -1,18 +1,22 @@
 # Hurricane Updates - Bulletin OCR Service
 
-An automated OCR service that monitors the Office of Disaster Preparedness and Emergency Management (ODPEM) Jamaica weather alerts website, extracts bulletin images, performs OCR using DeepSeek-OCR, and stores the results as markdown files in Azure Blob Storage.
+An automated service that:
+- Monitors the Office of Disaster Preparedness and Emergency Management (ODPEM) Jamaica weather alerts website, extracts bulletin images, performs OCR using DeepSeek-OCR, and stores the results as markdown in Azure Blob Storage.
+- Fetches the latest news stories from Jamaica Information Service (JIS) and uploads them as markdown to a separate Azure container.
 
 ## Overview
 
-This service periodically scrapes the ODPEM weather alert webpage for bulletin images, performs OCR on them to extract text content, and automatically uploads the extracted markdown to Azure Blob Storage. The service is designed to run on RunPod's serverless GPU platform for efficient processing.
+This service periodically scrapes the ODPEM weather alert webpage for bulletin images, performs OCR on them to extract text content, and uploads the extracted markdown to Azure Blob Storage. It also fetches recent JIS news articles, converts the content to markdown, and uploads them to a separate Azure container. The service is designed to run on RunPod's serverless GPU platform for efficient processing.
 
 ## Features
 
-- **Automated Web Scraping**: Automatically finds and extracts all bulletin images from the ODPEM website
+- **Automated Web Scraping (Bulletins)**: Automatically finds and extracts all bulletin images from the ODPEM website
+- **Automated News Fetching**: Scrapes latest stories from JIS and converts them to markdown
 - **State-of-the-Art OCR**: Uses DeepSeek-OCR model for accurate text extraction from images
 - **Duplicate Prevention**: Tracks processed images to avoid reprocessing
 - **Markdown Output**: Converts images to well-structured markdown format
-- **Azure Blob Storage Integration**: Automatically uploads results to Azure Blob Storage
+- **Azure Blob Storage Integration**: Uploads bulletins and news to separate containers
+- **Standardized Bulletin Naming**: Bulletins saved as `Bulletin-<number>.md` where number is 1 + the highest number detected across existing `.md` filenames (trailing digits)
 - **Scheduled Execution**: Runs hourly via GitHub Actions
 - **Serverless Architecture**: Built for RunPod's serverless GPU platform
 
@@ -23,11 +27,9 @@ GitHub Actions (hourly trigger)
     ↓
 RunPod Serverless Endpoint
     ↓
-Extract images from webpage
-    ↓
-DeepSeek-OCR Model (GPU-accelerated)
-    ↓
-Azure Blob Storage (markdown files)
+Scrape ODPEM images → OCR → Upload to `AZURE_CONTAINER_NAME`
+    ↘
+     Fetch JIS news → HTML→MD → Upload to `AZURE_NEWS_CONTAINER_NAME`
 ```
 
 ## Requirements
@@ -49,8 +51,10 @@ pip install -r requirements.txt
 
 Set the following environment variables (or add them as secrets in RunPod):
 
-- `AZURE_CONTAINER_NAME`: Name of your Azure Blob Storage container
 - `AZURE_STORAGE_CONNECTION_STRING`: Your Azure Storage connection string
+- `AZURE_CONTAINER_NAME`: Container for bulletin markdown files
+- `AZURE_NEWS_CONTAINER_NAME`: Container for news markdown files
+- `HF_TOKEN` (optional): Hugging Face token if needed
 
 ### 3. RunPod Deployment
 
@@ -107,28 +111,36 @@ You can override the default configuration via the handler input:
 
 ## How It Works
 
-1. **Web Scraping**: The service visits the configured webpage and extracts all images from the main content area
-2. **State Check**: Compares found images against a state file in Azure Blob Storage to identify new images
-3. **Image Processing**: Downloads each new image and resizes if necessary for optimal OCR performance
-4. **OCR Extraction**: Uses the DeepSeek-OCR model to extract text and convert it to markdown format
-5. **Upload Results**: Saves the markdown output to Azure Blob Storage with a timestamp
-6. **State Update**: Updates the processed URLs state file to prevent future duplicate processing
+1. **Bulletins**
+   - Scrape ODPEM and collect image links
+   - Compare to a state file in Azure to skip processed images
+   - Download new images and run DeepSeek-OCR to produce markdown
+   - Compute next bulletin number by scanning all `.md` filenames and extracting the last number; upload as `Bulletin-<number>.md`
+   - Append processed image URLs to the state file in Azure
+2. **News**
+   - Scrape latest articles from `https://jis.gov.jm`
+   - Parse HTML content and convert to markdown
+   - Upload each article markdown to `AZURE_NEWS_CONTAINER_NAME`
+3. The handler always runs both flows; even if there are no new bulletin images, news fetching still runs.
 
 ## Output
 
-Markdown files are stored in Azure Blob Storage under the `bulletins/` prefix with the following naming pattern:
+Bulletins are uploaded as files named:
 
 ```
-bulletins/YYYY-MM-DD_HH-MM-SS_image_name.md
+Bulletin-<number>.md
 ```
+
+The `<number>` is 1 greater than the highest number found in any existing `.md` filename (by scanning trailing/last digits in filenames). News files are uploaded as `<date>_<slugified-title>.md` to the news container.
 
 ## Configuration
 
 Key configuration variables in `bulletin_ocr_service.py`:
 
-- `WEBPAGE_URL`: Default webpage to scrape (can be overridden)
-- `WORKING_DIR`: Local temporary directory for processing
-- `STATE_FILE_NAME`: Name of the state file in blob storage
+- `BULLETIN_URL`: ODPEM page to scrape for bulletin images
+- `AZURE_CONTAINER_NAME`: Azure container for bulletins
+- `AZURE_NEWS_CONTAINER_NAME`: Azure container for news
+- `STATE_FILE_BLOB_NAME`: Blob filename used to track processed bulletin image URLs
 
 ## Technologies
 
@@ -138,6 +150,7 @@ Key configuration variables in `bulletin_ocr_service.py`:
 - **RunPod**: Serverless GPU platform
 - **Azure Blob Storage**: Cloud storage for outputs
 - **BeautifulSoup**: Web scraping
+- **markdownify**: HTML-to-Markdown conversion for news
 - **GitHub Actions**: CI/CD and scheduling
 
 ## License
