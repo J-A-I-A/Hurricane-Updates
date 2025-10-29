@@ -419,29 +419,26 @@ def handler(event):
     try:
         # 1. Get the list of all images on the page
         all_image_urls = find_all_bulletin_images(BULLETIN_URL)
-        if not all_image_urls:
-            return {"status": "success", "message": "No images found on page."}
 
         # 2. Get the list of images we've already processed
         processed_urls = get_processed_urls()
         
         # 3. Determine which images are new
         new_images_to_process = [url for url in all_image_urls if url not in processed_urls]
-        
-        if not new_images_to_process:
-            print("No new images found. Job complete.")
-            return {"status": "success", "message": "No new images to process."}
 
-        print(f"Found {len(new_images_to_process)} new image(s) to process.")
-        
         processed_count = 0
         failed_count = 0
-        
-        # 4. Compute the starting Bulletin number once per run
-        next_bulletin_num = get_next_bulletin_number()
 
-        # 5. Process each new image
-        for image_url in new_images_to_process[::-1]:
+        if not new_images_to_process:
+            print("No new images found.")
+        else:
+            print(f"Found {len(new_images_to_process)} new image(s) to process.")
+            
+            # 4. Compute the starting Bulletin number once per run
+            next_bulletin_num = get_next_bulletin_number()
+
+            # 5. Process each new image
+            for image_url in new_images_to_process[::-1]:
             local_image_path = None
             try:
                 # 4a. Download the image
